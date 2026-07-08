@@ -14,10 +14,6 @@ class QueryRequest(BaseModel):
 app = FastAPI(title="Customer Support Agent")
 api_cache = APICache()
 
-@app.get("/health")
-def health():
-    return {"status": "healthy"}
-
 @app.post("/query")
 def query(request: QueryRequest):
     question = request.question
