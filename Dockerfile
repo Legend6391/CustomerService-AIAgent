@@ -42,8 +42,8 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy the application code (utilizes .dockerignore to exclude local .venv, .cache, and db files)
 COPY . /app
 
-# Expose ports: 8000 for FastAPI application, 11434 for Ollama
-EXPOSE 8000 11434
+# Expose port: 8000 for FastAPI application
+EXPOSE 8000
 
 # Start Ollama in the background, wait for it to be ready, then start the FastAPI app
 CMD ["sh", "-c", "ollama serve & until curl -s http://localhost:11434/api/tags >/dev/null; do sleep 0.5; done && uvicorn app:app --host 0.0.0.0 --port 8000"]

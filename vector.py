@@ -3,7 +3,6 @@ import pandas as pd
 from langchain_ollama import OllamaEmbeddings
 from langchain_chroma import Chroma
 from langchain_core.documents import Document
-from langchain_core.runnables import RunnableLambda
 from langchain_classic.embeddings import CacheBackedEmbeddings
 from langchain_classic.storage.file_system import LocalFileStore
 
@@ -12,17 +11,17 @@ cache_dir = os.path.join(os.path.dirname(__file__), ".cache", "embeddings")
 os.makedirs(cache_dir, exist_ok=True)
 store = LocalFileStore(cache_dir)
 
-df = pd.read_csv("company_faq.csv")
+# Load CSV data
+df = pd.read_csv("insurance.csv")
+
 base_embeddings = OllamaEmbeddings(
     model="nomic-embed-text:latest",
-    keep_alive= 300,
+    keep_alive=300,
     base_url="http://localhost:11434"  # Windows/Mac: connects to host
 )
 
-# Safe namespace replacement for Windows (no colons in filename paths)
 safe_namespace = base_embeddings.model.replace(":", "_")
 
-# Wrap embeddings to cache both documents and queries
 cached_embeddings = CacheBackedEmbeddings.from_bytes_store(
     underlying_embeddings=base_embeddings,
     document_embedding_cache=store,
@@ -31,73 +30,69 @@ cached_embeddings = CacheBackedEmbeddings.from_bytes_store(
 )
 
 db_location = "chrome_langchain_db"
-add_documents = not os.path.exists(db_location)
 
 vector_store = Chroma(
-    collection_name="company_faq", 
-    embedding_function=cached_embeddings, 
+    collection_name="insurance",
+    embedding_function=cached_embeddings,
     persist_directory=db_location
 )
 
-if add_documents:
-    documents = []
+# Check count to see if we need to reload/rebuild
+num_rows = len(df)
+try:
+    db_count = vector_store._collection.count()
+except Exception as e:
+    db_count = 0
 
+if db_count != num_rows:
+    print(f"Database count ({db_count}) mismatch with CSV rows ({num_rows}). Rebuilding collection...")
+    try:
+        vector_store.delete_collection()
+    except Exception as e:
+        print(f"Could not delete collection: {e}")
+    
+    # Re-instantiate vector store to recreate collection
+    vector_store = Chroma(
+        collection_name="insurance",
+        embedding_function=cached_embeddings,
+        persist_directory=db_location
+    )
+    
+    documents = []
     for idx, row in df.iterrows():
         document = Document(
-            page_content=f""" Question: {row['question']} Answer: {row['answer']} """,
-            metadata={"source": "company_faq.csv", "id": row["id"], "category": row["category"]},
+            page_content=f"Question: {row['question']} Answer: {row['answer']}",
+            metadata={"source": "insurance.csv", "id": row["id"], "category": row["category"]},
         )
         documents.append(document)
-
-    vector_store.add_documents(documents=documents)
-
-# Format documents for readability in LLM context
-# def format_docs(docs):
-#     """Format retrieved documents as readable text for the LLM"""
-#     formatted = []
-#     for doc in docs:
-#         formatted.append(f"Q: {doc.page_content}")
-#     return "\n\n".join(formatted)
-
-
-# #Context builder with relevance scores
-# #Add more results from other sources here itself
-# def build_context(query):
-#     results = vector_store.similarity_search_with_relevance_scores(
-#         query,
-#         k=3
-#     )
-#     context_parts = []
-#     best_score = results
-
-#     for doc, score in results:
-#         context_parts.append(doc.page_content)
-
-#     context = "\n\n".join(
-#         doc.page_content
-#         for doc, _ in results
-#     )
-
-#     return context, best_score, results
-    
-# base_retriever = vector_store.as_retriever(search_kwargs={"k": 3})
-# retriever = base_retriever | RunnableLambda(format_docs)
+        
+    print(f"Indexing {len(documents)} documents in batches...")
+    batch_size = 100
+    for i in range(0, len(documents), batch_size):
+        batch = documents[i : i + batch_size]
+        vector_store.add_documents(documents=batch)
+        print(f"Indexed batch {i // batch_size + 1}/{(len(documents) - 1) // batch_size + 1}")
+else:
+    print(f"Successfully loaded existing database with {db_count} documents.")
 
 def retrieve_with_confidence(query):
     results = vector_store.similarity_search_with_relevance_scores(
         query,
         k=3
     )
-
     if not results:
-        return "", 0.0, []
+        return "", "General", "", 0.0, [], []
 
     context = "\n\n".join(
         doc.page_content for doc, _ in results
     )
 
     best_score = results[0][1]
+    best_doc = results[0][0]
+    category = best_doc.metadata.get("category", "General")
+    best_answer = best_doc.page_content
 
-    return context, best_score, results
+    docs = [doc for doc, score in results]
+    scores = [score for doc, score in results]
 
-
+    return context, category, best_answer, best_score, docs, scores

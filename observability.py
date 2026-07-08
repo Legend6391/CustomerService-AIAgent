@@ -28,19 +28,17 @@ def get_memory_usage():
         "ram_used_mb": ram_used_mb
     }
 
-def retrieval_metrics(results):
+def retrieval_metrics(scores):
 
-    if not results:
+    if not scores:
         return {
             "no_documents": 0,
             "best_score": 0,
             "avg_score": 0
         }
 
-    scores = [score for _, score in results]
-
     return {
-        "no_documents": len(results),
+        "no_documents": len(scores),
         "best_score": round(max(scores), 3),
         "avg_score": round(sum(scores) / len(scores), 3)
     }
@@ -55,7 +53,8 @@ def log(
     latency,
     retrieval_metrics,
     memory_usage,
-    blocked_input
+    blocked_input,
+    cache_hit=False
 ):
 
     trace = {
@@ -64,6 +63,7 @@ def log(
         "question": question,
         "latency": {
             "IG Latency": round(latency["IG_latency"], 3),
+            "IC Latency": round(latency.get("IC_latency", 0.0), 3),
             "Response Latency": round(latency["Response_latency"], 3),
             "Total Latency": round(latency["Total_latency"], 3)
         },
@@ -79,14 +79,27 @@ def log(
             "ram_percent": round(memory_usage["ram_percent"], 3),
             "ram_used_mb": round(memory_usage["ram_used_mb"], 3)
         },
-        "blocked_input": blocked_input
+        "blocked_input": blocked_input,
+        "cache_hit": cache_hit
     }
 
-    import os
-    os.makedirs("logs", exist_ok=True)
-    
-    with open("logs.jsonl", "a", encoding="utf-8" ) as f:
-        f.write(json.dumps(trace) + "\n" )
-    
+    current_dir = os.path.dirname(os.path.abspath(__file__))
+    log_file = "logs.jsonl"
+    try:
+        # Inspect vector.py to see which CSV is configured for loading
+        vector_path = os.path.join(current_dir, "vector.py")
+        with open(vector_path, "r", encoding="utf-8") as vf:
+            vector_code = vf.read()
+        if "insurance.csv" in vector_code:
+            log_file = "logs_insur.jsonl"
+    except Exception:
+        pass
+
+    log_dir = os.path.join(current_dir, "logs")
+    os.makedirs(log_dir, exist_ok=True)
+    log_path = os.path.join(log_dir, log_file)
+
+    with open(log_path, "a", encoding="utf-8") as f:
+        f.write(json.dumps(trace) + "\n")
     
     return trace
